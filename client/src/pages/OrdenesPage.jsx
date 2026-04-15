@@ -44,7 +44,13 @@ export default function OrdenesPage() {
     if (isAdmin) {
       reqs.push(api.get('/clientes'), api.get('/tecnicos'), api.get('/equipos'))
     } else if (isCliente) {
-      reqs.push(api.get('/auth/me'))
+      // Usar perfil_id del contexto si ya está disponible
+      if (usuario?.perfil_id) {
+        setMiPerfilId(usuario.perfil_id)
+        reqs.push(api.get('/equipos'))
+      } else {
+        reqs.push(api.get('/auth/me'))
+      }
     }
 
     Promise.all(reqs).then(async ([ord, second, tec, eq]) => {
@@ -53,28 +59,37 @@ export default function OrdenesPage() {
         setClientes(second?.data?.data || [])
         setTecnicos(tec?.data?.data || [])
         setEquipos(eq?.data?.data || [])
-      } else if (isCliente && second) {
-        const perfilId = second.data?.perfil?.id
-        setMiPerfilId(perfilId)
-        if (perfilId) {
-          const eqRes = await api.get('/equipos')
-          setEquipos(eqRes.data.data || [])
+      } else if (isCliente) {
+        if (usuario?.perfil_id) {
+          // second es la respuesta de /equipos
+          const todosEquipos = second?.data?.data || []
+          setEquipos(todosEquipos.filter(e => String(e.cliente_id) === String(usuario.perfil_id)))
+        } else if (second) {
+          // second es la respuesta de /auth/me
+          const perfilId = second.data?.perfil?.id
+          setMiPerfilId(perfilId)
+          if (perfilId) {
+            const eqRes = await api.get('/equipos')
+            const todosEquipos = eqRes.data.data || []
+            setEquipos(todosEquipos.filter(e => String(e.cliente_id) === String(perfilId)))
+          }
         }
-      } else if (isTecnico) {
-        // Técnicos solo ven, no crean
       }
     }).catch(() => toast.error('Error cargando datos')).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
 
+  // Para clientes, los equipos ya están filtrados por su cliente_id en el load
+  // Para admins, filtrar por el cliente seleccionado en el form
   const equiposFiltrados = isCliente
     ? equipos
-    : (form.cliente_id ? equipos.filter(e => String(e.cliente_id) === String(form.cliente_id)) : equipos)
+    : (form.cliente_id ? equipos.filter(e => String(e.cliente_id) === String(form.cliente_id)) : [])
 
   const openCreate = () => {
     const empty = makeEmpty()
-    if (isCliente && miPerfilId) empty.cliente_id = miPerfilId
+    const clienteId = miPerfilId || usuario?.perfil_id
+    if (isCliente && clienteId) empty.cliente_id = clienteId
     setForm(empty)
     setEditing(null)
     setModal(true)
@@ -275,6 +290,14 @@ export default function OrdenesPage() {
                     <option value="">Seleccionar cliente</option>
                     {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                   </select>
+                  {form.cliente_id && (() => {
+                    const c = clientes.find(x => String(x.id) === String(form.cliente_id))
+                    return c ? (
+                      <div style={{ marginTop: 6, padding: '8px 12px', background: 'rgba(56,189,248,0.08)', borderRadius: 8, fontSize: 13, color: 'var(--text-muted, #94a3b8)' }}>
+                        📞 {c.telefono || 'Sin teléfono'} &nbsp;·&nbsp; 📍 {c.direccion || 'Sin dirección'}
+                      </div>
+                    ) : null
+                  })()}
                 </div>
               )}
 
@@ -283,10 +306,22 @@ export default function OrdenesPage() {
                 <select className="form-control" value={form.equipo_id}
                   onChange={e => setForm({ ...form, equipo_id: e.target.value })}>
                   <option value="">Seleccionar equipo</option>
+                  {equiposFiltrados.length === 0 && form.cliente_id && isAdmin && (
+                    <option disabled>— Este cliente no tiene equipos registrados —</option>
+                  )}
                   {equiposFiltrados.map(e => (
                     <option key={e.id} value={e.id}>{e.tipo} - {e.marca} {e.modelo}</option>
                   ))}
                 </select>
+                {form.equipo_id && (() => {
+                  const eq = equiposFiltrados.find(x => String(x.id) === String(form.equipo_id))
+                  return eq ? (
+                    <div style={{ marginTop: 6, padding: '8px 12px', background: 'rgba(56,189,248,0.08)', borderRadius: 8, fontSize: 13, color: 'var(--text-muted, #94a3b8)' }}>
+                      🔧 {eq.tipo} &nbsp;·&nbsp; 🏷️ {eq.marca} {eq.modelo} &nbsp;{eq.numero_serie ? `· #${eq.numero_serie}` : ''}
+                      {eq.fecha_instalacion ? ` · Instalado: ${eq.fecha_instalacion}` : ''}
+                    </div>
+                  ) : null
+                })()}
               </div>
 
               {isAdmin && (
@@ -299,6 +334,15 @@ export default function OrdenesPage() {
                       <option key={t.id} value={t.id}>{t.nombre} - {t.especialidad}</option>
                     ))}
                   </select>
+                  {form.tecnico_id && (() => {
+                    const t = tecnicos.find(x => String(x.id) === String(form.tecnico_id))
+                    return t ? (
+                      <div style={{ marginTop: 6, padding: '8px 12px', background: 'rgba(56,189,248,0.08)', borderRadius: 8, fontSize: 13, color: 'var(--text-muted, #94a3b8)' }}>
+                        🛠️ {t.especialidad || 'Sin especialidad'} &nbsp;·&nbsp; 📞 {t.telefono || 'Sin teléfono'}
+                        {t.disponible === false ? ' · 🔴 No disponible' : ' · 🟢 Disponible'}
+                      </div>
+                    ) : null
+                  })()}
                 </div>
               )}
 
